@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Centerliner</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6;
+    --accent: #2e4d80; --accent-ink: #ffffff; --warn-bg: #fff4d6; --warn-ink: #5a4300; --err: #b3261e;
+    --stage: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --panel: #212120; --ink: #efefea; --muted: #a2a29b; --line: #38382f;
+      --warn-bg: #3a3112; --warn-ink: #f2dc9a; --err: #ff8a80; --stage: #2a2a28; --accent: #8fb3e6; --accent-ink: #101a2e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 -apple-system, system-ui, "Helvetica Neue", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 8px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  header span { color: var(--muted); font-size: 13px; }
+  main { padding: 0 20px 24px; max-width: 1200px; margin: 0 auto; }
+  #drop { border: 2px dashed var(--line); border-radius: 12px; background: var(--panel); text-align: center;
+    padding: 44px 16px; cursor: pointer; transition: border-color .15s, background .15s; }
+  #drop.over { border-color: var(--accent); }
+  #drop strong { display: block; font-size: 17px; }
+  #drop small { color: var(--muted); }
+  body.loaded #drop { padding: 32px 16px; }  /* shrunk but twice as high as before (was 10px) */
+  body.loaded #drop small { display: none; }
+  body.loaded #drop strong { font-size: 14px; font-weight: 500; }
+  #work { display: none; margin-top: 16px; gap: 16px; grid-template-columns: 1fr 260px; }
+  body.loaded #work { display: grid; }
+  @media (max-width: 760px) { #work { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  #viewer { overflow: hidden; display: flex; flex-direction: column; min-height: 420px; }
+  .tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; background: transparent; color: var(--muted); font: inherit; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  .tabs button[aria-pressed="true"] { background: var(--bg); color: var(--ink); font-weight: 600; }
+  #stage { flex: 1; background: var(--stage); display: flex; align-items: center; justify-content: center; padding: 12px; position: relative; }
+  #stage img { max-width: 100%; max-height: 70vh; width: auto; height: auto; display: block; }
+  #stage.busy img { opacity: .45; }
+  #spin { position: absolute; top: 12px; right: 14px; color: var(--muted); font-size: 13px; display: none; }
+  #stage.busy #spin { display: block; }
+  aside { padding: 16px; display: flex; flex-direction: column; gap: 16px; align-self: start; }
+  label { display: flex; justify-content: space-between; font-weight: 600; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 8px 0 2px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; font-size: 14px; }
+  dt { color: var(--muted); } dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  .error { color: var(--err); font-weight: 600; }
+  .buttons { display: flex; gap: 8px; }
+  .buttons button { flex: 1; font: inherit; font-weight: 600; padding: 9px 10px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .buttons button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .buttons button:disabled { opacity: .45; cursor: default; }
+  #reset { border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; padding: 0; text-decoration: underline; align-self: flex-start; }
+  .legend { font-size: 12px; color: var(--muted); }
+  #ver { margin-left: auto; font-size: 12px; color: var(--muted); }
+  #ver.stale { color: #b3261e; font-weight: 600; }
+</style>
+</head>
+<body>
+<header><h1>Centerliner</h1><span>SVG outlines in, editable centerline strokes out</span><span id="ver" title="Which version of the code this copy of the app is running"></span></header>
+<main>
+  <div id="drop" tabindex="0" role="button" aria-label="Choose or drop an SVG file">
+    <strong id="dropTitle">Drop an SVG here, or click to choose one</strong>
+    <small>One colour, outlined shapes of roughly even width. Everything stays on this computer.</small>
+    <input id="file" type="file" accept=".svg,image/svg+xml" hidden>
+  </div>
+
+  <div id="work">
+    <div class="card" id="viewer">
+      <div class="tabs" role="group" aria-label="View">
+        <button data-view="compare" aria-pressed="true">Compare</button>
+        <button data-view="result" aria-pressed="false">Result</button>
+        <button data-view="original" aria-pressed="false">Original</button>
+      </div>
+      <div id="stage"><span id="spin">Converting…</span><img id="img" alt=""></div>
+    </div>
+
+    <aside class="card">
+      <div>
+        <label for="radius">Corner radius <span id="radiusVal">0.8</span></label>
+        <input id="radius" type="range" min="0" max="2" step="0.1" value="0.8">
+        <div class="hint">Corners tighter than this become sharp corners; rounder ones stay curves. Unit: stroke widths.</div>
+        <button id="reset" type="button">Reset to 0.8</button>
+      </div>
+      <dl id="stats"></dl>
+      <div id="messages"></div>
+      <div class="legend" id="legend">Compare: pale blue = original, dark blue line = centerline, round dot = smooth anchor, dark square = corner anchor, orange = ink the lines do not cover.</div>
+      <div class="buttons">
+        <button id="save" class="primary" disabled>Save SVG</button>
+        <button id="copy" disabled>Copy SVG</button>
+      </div>
+    </aside>
+  </div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  fetch("/version").then((r) => r.json()).then((v) => {
+    const el = $("ver");
+    el.textContent = "version " + v.launched + " · started " + v.started + (v.stale ? " · newer code exists: restart the app" : "");
+    el.classList.toggle("stale", !!v.stale);
+  }).catch(() => {});
+  const DEFAULT_RADIUS = 0.8;
+  let source = null, name = "drawing", data = null, view = "compare", timer = null, seq = 0;
+
+  const store = {
+    get() { try { return localStorage.getItem("centerliner-radius"); } catch (e) { return null; } },
+    set(v) { try { localStorage.setItem("centerliner-radius", v); } catch (e) {} },
+  };
+  const saved = parseFloat(store.get());
+  if (!isNaN(saved)) { $("radius").value = saved; $("radiusVal").textContent = saved.toFixed(1); }
+
+  const dataUrl = (svg) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+
+  function show() {
+    const img = $("img");
+    if (!data) return;
+    img.src = view === "original" ? dataUrl(source) : dataUrl(view === "result" ? data.result : data.compare);
+    $("legend").style.display = view === "compare" ? "" : "none";
+  }
+
+  function render() {
+    show();
+    const s = data.stats, rows = [["Stroke width", s.stroke + " units"], ["Paths", s.paths], ["Dots", s.dots], ["Anchors", s.anchors], ["Redrawn match", s.match + "%"]];
+    $("stats").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+    $("messages").innerHTML = data.warnings.map((w) => `<div class="warn"></div>`).join("");
+    [...$("messages").children].forEach((el, i) => { el.textContent = data.warnings[i]; });
+    $("save").disabled = $("copy").disabled = false;
+  }
+
+  async function convert() {
+    const my = ++seq;
+    $("stage").classList.add("busy");
+    try {
+      const r = await fetch("/convert?radius=" + $("radius").value, { method: "POST", body: source });
+      const j = await r.json();
+      if (my !== seq) return;
+      if (j.error) {
+        data = null; $("save").disabled = $("copy").disabled = true;
+        $("stats").innerHTML = ""; $("messages").innerHTML = '<div class="error"></div>';
+        $("messages").firstChild.textContent = j.error; $("img").removeAttribute("src");
+      } else { data = j; render(); }
+    } catch (e) {
+      if (my === seq) { $("messages").innerHTML = '<div class="error">Lost contact with the Centerliner program. Is its window still open?</div>'; }
+    } finally { if (my === seq) $("stage").classList.remove("busy"); }
+  }
+
+  async function load(file) {
+    if (!file) return;
+    source = await file.text();
+    name = file.name.replace(/\.svg$/i, "");
+    $("dropTitle").textContent = file.name + "  (drop another to replace)";
+    document.body.classList.add("loaded");
+    convert();
+  }
+
+  const drop = $("drop");
+  drop.addEventListener("click", () => $("file").click());
+  drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+  $("file").addEventListener("change", (e) => { load(e.target.files[0]); e.target.value = ""; });
+  ["dragenter", "dragover"].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  document.addEventListener("drop", (e) => load(e.dataTransfer.files[0]));
+
+  $("radius").addEventListener("input", (e) => {
+    $("radiusVal").textContent = (+e.target.value).toFixed(1);
+    store.set(e.target.value);
+    if (!source) return;
+    clearTimeout(timer); timer = setTimeout(convert, 250);
+  });
+  $("reset").addEventListener("click", () => { $("radius").value = DEFAULT_RADIUS; $("radius").dispatchEvent(new Event("input")); });
+
+  document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+    view = b.dataset.view;
+    document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+    show();
+  }));
+
+  $("save").addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([data.result], { type: "image/svg+xml" }));
+    a.download = name + "-centerline.svg";
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+  $("copy").addEventListener("click", async () => {
+    const b = $("copy");
+    try { await navigator.clipboard.writeText(data.result); b.textContent = "Copied"; }
+    catch (e) { b.textContent = "Copy failed"; }
+    setTimeout(() => { b.textContent = "Copy SVG"; }, 1500);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Convert a filled-outline SVG into centerline strokes.
+#   ./centerline input.svg output.svg [--corner-radius 0.8]
+DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$DIR/.venv/bin/python" "$DIR/prototypes/centerline_cli.py" "$@"
