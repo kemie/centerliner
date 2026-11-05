@@ -2,7 +2,9 @@
 
 Turns filled vector outlines of roughly even width (icons, monoline lettering) into editable **centerline strokes**: one open path down the middle of each stroke, with round caps, so you can restyle the line afterwards (weight, caps, dashes).
 
-**Try it in the browser: https://kemie.github.io/centerliner/** — drop an SVG, check the Compare view, save the result. Everything runs in your browser; your file is never uploaded. (The first visit downloads about 50 MB; later visits are faster.)
+**Try it in the browser: https://kemie.github.io/centerliner/** 
+
+Drop an SVG, check the Compare view, save the result. Everything runs in your browser; your file is never uploaded. (The first visit downloads about 50 MB; later visits are faster.)
 
 ![Centerliner converting a location-pin icon: pale blue original, dark blue centerline, round dots for smooth anchors and squares for corners](docs/screenshot.png)
 
