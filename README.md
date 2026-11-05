@@ -43,4 +43,4 @@ CENTERLINE_ENGINE=centerline_exact ../.venv/bin/python regression.py            
 ```
 
 ## Licence
-[MIT](LICENSE). Third-party libraries (numpy, scipy, scikit-image, Pillow, Shapely, svgpathtools, resvg, Pyodide) keep their own licences.
+[MIT](LICENSE). Third-party libraries (numpy, scipy, scikit-image, Pillow, Shapely, svgpathtools, resvg, Pyodide) keep their own licences: see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
