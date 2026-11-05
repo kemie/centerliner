@@ -34,31 +34,33 @@ def outline_lines(svg_file):
 
 def merge_collinear(segs, tol):
     """Join consecutive pieces of one straight edge (e.g. 'h2 1 3') into one segment."""
-    segs = [list(s) for s in segs]
+    S = np.array(segs, float).reshape(-1, 4)
+    alive = np.ones(len(S), bool)
+    U = S[:, 2:] - S[:, :2]
+    U = U / np.hypot(U[:, 0], U[:, 1])[:, None]  # unit direction of every piece
+    idx = np.arange(len(S))
     changed = True
-    while changed:
+    while changed:  # repeat until a full pass finds nothing left to join
         changed = False
-        for i in range(len(segs)):
-            for j in range(len(segs)):
-                if i == j:
-                    continue
-                a, b = np.array(segs[i]), np.array(segs[j])
-                da, db = a[2:] - a[:2], b[2:] - b[:2]
-                la, lb = np.linalg.norm(da), np.linalg.norm(db)
-                ua, ub = da / la, db / lb
-                if np.dot(ua, ub) < 0.9999:
-                    continue
+        for i in range(len(S)):
+            if not alive[i]:
+                continue
+            while True:  # keep extending piece i for as long as another piece continues it
+                a, ua = S[i], U[i]
                 n = np.array([-ua[1], ua[0]])
-                if abs(np.dot(b[:2] - a[:2], n)) > tol:
-                    continue
-                if np.linalg.norm(a[2:] - b[:2]) <= tol:  # b continues a
-                    segs[i] = [a[0], a[1], b[2], b[3]]
-                    del segs[j]
-                    changed = True
+                ok = alive & (idx != i) & (U @ ua >= 0.9999)
+                ok &= np.abs((S[:, :2] - a[:2]) @ n) <= tol
+                ok &= np.hypot(*(a[2:] - S[:, :2]).T) <= tol  # b continues a
+                js = np.flatnonzero(ok)
+                if not len(js):
                     break
-            if changed:
-                break
-    return np.array(segs, float).reshape(-1, 4)
+                j = js[0]
+                S[i] = [a[0], a[1], S[j, 2], S[j, 3]]
+                d = S[i, 2:] - S[i, :2]
+                U[i] = d / np.hypot(*d)
+                alive[j] = False
+                changed = True
+    return S[alive]
 
 
 def pair_edges(segs, w, ink_at, lo=0.6, hi=1.45, ang=3.0):
