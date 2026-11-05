@@ -4,7 +4,7 @@ Turns filled vector outlines of roughly even width (icons, monoline lettering) i
 
 **Try it in the browser: https://kemie.github.io/centerliner/** — drop an SVG, check the Compare view, save the result. Everything runs in your browser; your file is never uploaded. (The first visit downloads about 50 MB; later visits are faster.)
 
-![Centerliner converting an outlined "lo" shape: pale blue original, dark blue centerline, round dots for smooth anchors](docs/screenshot.jpg)
+![Centerliner converting a location-pin icon: pale blue original, dark blue centerline, round dots for smooth anchors and squares for corners](docs/screenshot.png)
 
 ## What it takes, and what it gives back
 - **In:** an SVG with one colour and filled outlined shapes of roughly even width. SVG only (no PNG/JPG, PDF/EPS/AI or DXF; export SVG from your drawing app first).
