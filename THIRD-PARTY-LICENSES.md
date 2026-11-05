@@ -27,6 +27,3 @@ MPL-2.0 is a file-level licence: it only asks something of anyone who modifies t
 
 ## LGPL-2.1
 - **GEOS**, a geometry library that Shapely's ready-made downloads include. Centerliner doesn't ship it either; it comes with Shapely when you install it, or with Pyodide in the browser.
-
-## Not used
-AutoTrace (GPL) was only tried once as a separate program in an early comparison. No code from it is in this project.
