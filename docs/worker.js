@@ -3,6 +3,7 @@
 import { initWasm, Resvg } from "https://cdn.jsdelivr.net/npm/@resvg/resvg-wasm@2.6.2/index.mjs";
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.mjs";
 
+const VERSION = new URL(import.meta.url).searchParams.get("v") || "0";
 const ENGINE_FILES = ["centerline_exact", "centerline", "exact_edges", "exact_arcs", "exact_snap", "exact_ovals", "common", "webconvert"];
 const STEPS = 5;
 const progress = (step, text) => postMessage({ type: "progress", step, steps: STEPS, text });
@@ -27,7 +28,7 @@ async function boot() {
   progress(5, "Starting the converter…");
   py.FS.mkdirTree("/engine");
   for (const f of ENGINE_FILES) {
-    const r = await fetch(new URL(`engine/${f}.py`, import.meta.url));
+    const r = await fetch(new URL(`engine/${f}.py`, import.meta.url).href + "?v=" + VERSION);  // version from the page: new version = fresh files
     if (!r.ok) throw new Error(`could not load engine/${f}.py`);
     py.FS.writeFile(`/engine/${f}.py`, await r.text());
   }

@@ -75,7 +75,7 @@
 </style>
 </head>
 <body>
-<header><h1>Centerliner</h1><span>SVG outlines in, editable centerline strokes out</span><span id="ver" title="This page runs the converter inside your browser">browser edition</span></header>
+<header><h1>Centerliner</h1><span>SVG outlines in, editable centerline strokes out</span><span id="ver" title="This page runs the converter inside your browser">browser edition (version <span id="verNum"></span>)</span></header>
 <main>
   <div id="drop" tabindex="0" role="button" aria-label="Choose or drop an SVG file">
     <strong id="dropTitle">Drop an SVG here, or click to choose one</strong>
@@ -120,10 +120,13 @@
     </aside>
   </div>
 </main>
-<footer id="foot">Runs entirely in your browser: your files are never sent anywhere. The first visit downloads about 50 MB, which your browser then remembers.<span id="tip"></span></footer>
+<footer id="foot">Runs entirely in your browser: your files are never sent anywhere. The first visit downloads about 50 MB, which your browser then remembers.<span id="tip"></span><br>© 2026 Kemie · <a href="https://github.com/kemie/centerliner" target="_blank" rel="noopener">Source code and licence on GitHub</a></footer>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
+  // Bump this whenever the page, worker or engine files change: it is shown in the header and makes browsers fetch the new files instead of old cached ones.
+  const VERSION = "1.0";
+  $("verNum").textContent = VERSION;
   const TIP_URL = "";  // a "buy me a coffee" link: leave empty until there is a real one; the link only appears when this is set
   if (TIP_URL) { $("tip").innerHTML = ' <a target="_blank" rel="noopener"></a>'; $("tip").firstElementChild.href = TIP_URL; $("tip").firstElementChild.textContent = "If this saved you time, you can buy me a coffee."; }
   const MAX_BYTES = 20 * 1024 * 1024;
@@ -137,7 +140,7 @@
     $("bootTitle").textContent = "Getting the converter ready…";
     $("bootStep").textContent = "Starting…"; $("bootBar").firstElementChild.style.width = "2%";
     if (worker) worker.terminate();
-    worker = new Worker("worker.js", { type: "module" });
+    worker = new Worker("worker.js?v=" + VERSION, { type: "module" });
     worker.onmessage = (e) => {
       const m = e.data;
       if (m.type === "progress") {
