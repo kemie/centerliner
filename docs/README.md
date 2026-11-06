@@ -19,3 +19,6 @@ Pyodide, its libraries and the renderer are fetched from the jsDelivr CDN (about
 
 ## Status
 Tested in the desktop app's browser pane only: load, convert, corner-radius slider, bad file, file dropped while still loading, load-failure message, narrow (phone) width. Not tested: Safari, Firefox, real phones, slow networks.
+
+## Version
+`VERSION` near the top of the script in `index.html` is shown in the header and added to the worker and engine file addresses, so browsers fetch new files instead of old cached ones. Change it whenever the page, worker or engine files change.
