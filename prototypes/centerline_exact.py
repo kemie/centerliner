@@ -23,6 +23,7 @@ from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circ
 # Corner rule: a bend whose centreline radius is <= CORNER_R x stroke width is a sharp corner (a round join of
 # a sharp path); a larger radius is kept as a curve. Measured on the icons, joins sit at 0.3-0.7, true curves at 0.95+.
 CORNER_R = 0.8
+STRAIGHT_SIDE_DEG = 8.0  # a short bowed piece between two lines counts as a straight side only if both lines continue its direction within this many degrees
 DOT_MAX = 1.75  # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -556,7 +557,10 @@ def fit_curve_piece(Pc, w_px, tol, corner_deg, t1=None, t2=None):
     clen = float(np.linalg.norm(chord))
     if 0 < clen <= 3.5 * w_px:
         dev = np.abs(chord[0] * (S[:, 1] - S[0][1]) - chord[1] * (S[:, 0] - S[0][0])).max() / clen
-        if dev <= 0.10 * w_px:
+        # not when the neighbouring lines point clearly away from the chord: then this is the bending middle of an S (a straight
+        # chord would leave a kink at both ends); the 0.10 limit alone flipped with the pixel position
+        continues = (t1 is None or angle_deg(t1, chord) <= STRAIGHT_SIDE_DEG) and (t2 is None or angle_deg(t2, -chord) <= STRAIGHT_SIDE_DEG)
+        if dev <= 0.10 * w_px and continues:
             return [np.array([S[0], S[0] + chord / 3, S[0] + 2 * chord / 3, S[-1]])]
     if t1 is not None and angle_deg(t1, one_sided(S, L, 0)) > 55:
         t1 = None
