@@ -24,7 +24,8 @@ from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circ
 # a sharp path); a larger radius is kept as a curve. Measured on the icons, joins sit at 0.3-0.7, true curves at 0.95+.
 CORNER_R = 0.8
 STRAIGHT_SIDE_DEG = 8.0  # a short bowed piece between two lines counts as a straight side only if both lines continue its direction within this many degrees
-DOT_MAX = 1.75  # solid marks smaller than this many stroke widths (longest side) become dots
+SPUR_MAX = 0.92  # a short branch pointing out of a corner is a corner artefact only below this many stroke widths (measured: artefacts reach 0.85, real arms such as sparkle points are 1.0 or more)
+DOT_MAX = 1.75 # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
 
@@ -186,7 +187,7 @@ def simplify_graph(pos, is_junc, edges, w_px, dt, merge_f=1.3, prune_f=1.0):
                 continue  # a free stroke, not a branch hanging off a junction
             if length < 0.25 * w_px:
                 remove.update(branch)  # a hair a few pixels long is noise (real short arms are longer)
-            elif length < prune_f * w_px and is_bisector_spur(E, inc, pos, cur, branch, tip, w_px):
+            elif length < SPUR_MAX * w_px and is_bisector_spur(E, inc, pos, cur, branch, tip, w_px):
                 remove.update(branch)  # grows toward the centre of a round corner: not a stroke
             elif length < prune_f * w_px:
                 ty, tx = pos[tip]
@@ -635,6 +636,31 @@ def rdp_idx(P, eps):
     return np.nonzero(keep)[0]
 
 
+def drop_redundant(P, idx, eps):
+    """rdp_idx splits top-down, so it can leave a vertex in the middle of a straight run (it was the farthest point when
+    the chain still had a corner elsewhere). Drop such a vertex when the straight run it sits in is bounded by a real corner
+    (35 degrees or more) at both ends and the chord passes within eps of every point of it: a straight side between two corners."""
+    idx = list(idx)
+    k = 1
+    while k < len(idx) - 1:
+        if k < 2 or k + 2 > len(idx) - 1 or min(
+                angle_deg(P[idx[k - 1]] - P[idx[k - 2]], P[idx[k]] - P[idx[k - 1]]),
+                angle_deg(P[idx[k + 1]] - P[idx[k]], P[idx[k + 2]] - P[idx[k + 1]])) < 35:
+            k += 1
+            continue
+        a, b = P[idx[k - 1]], P[idx[k + 1]]
+        d = b - a
+        L = np.linalg.norm(d)
+        seg = P[idx[k - 1]:idx[k + 1] + 1]
+        dist = np.linalg.norm(seg - a, axis=1) if L < 1e-9 else np.abs(d[0] * (seg[:, 1] - a[1]) - d[1] * (seg[:, 0] - a[0])) / L
+        if dist.max() <= eps:
+            del idx[k]
+            k = max(k - 1, 1)
+        else:
+            k += 1
+    return np.array(idx)
+
+
 def tls_line(P, i0, i1, trim):
     seg = P[i0:i1 + 1]
     s = np.r_[0, np.cumsum(np.hypot(*np.diff(seg, axis=0).T))]
@@ -664,7 +690,7 @@ def build_items(P, Lmin, tolr, closed=False):
     """Split a chain into straight 'line' items and 'curve' items.
     A long chord from the polygon approximation is only a real line if it is very long, or it ends at a real corner
     (otherwise it is just part of a big arc, e.g. a large circle)."""
-    idx = rdp_idx(P, tolr)
+    idx = drop_redundant(P, rdp_idx(P, tolr), tolr)
     m = len(idx) - 1
     chords = [P[idx[t + 1]] - P[idx[t]] for t in range(m)]
 
