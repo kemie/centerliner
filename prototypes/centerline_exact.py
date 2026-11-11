@@ -19,6 +19,7 @@ from exact_ovals import find_ovals, apply_ovals, snap_ellipses, join_lines_ovals
 from exact_snap import min_bend_radius, snap_chain, merge_lines, sharpen_bends, snap_circles, arc_of_chain, arc_beziers
 from exact_edges import outline_lines, merge_collinear, pair_edges
 from exact_shapes import find_chain_ovals
+from exact_rings import find_rings, complete_rings
 from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circle_lines
 
 # Corner rule: a bend whose centreline radius is <= CORNER_R x stroke width is a sharp corner (a round join of
@@ -1390,13 +1391,23 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
     rad = CORNER_R if corner_radius is None else corner_radius
     ring_ends = []
     # ovals (flat rings whose hole is an ellipse): the exact centreline oval replaces the chains that lie on it
-    ovals, oval_paths = [], []
+    ovals, oval_paths, ring_paths = [], [], []
+    # complete rings (clean circular or elliptical hole, ink all round) are one closed shape each; chains are cut back to them
+    rings = []
+    try:
+        rings = find_rings(mask, w_px)
+        pieces, ring_paths = complete_rings(pieces, rings, w_px, list(circles) + [(c[0][0], c[0][1], c[1]) for c in circ_px])
+    except Exception:  # noqa: BLE001 - no usable rings: behave as before
+        ring_paths = []
     try:
         ovals = find_ovals(mask, w_px)
         if ovals:
-            pieces, oval_paths = apply_ovals(pieces, ovals, w_px)
+            drawn = [r["p"] for r in rings if r.get("done")]  # rings the step above already drew whole: not again
+            left = [o for o in ovals if not any(np.hypot(o["p"][0] - q[0], o["p"][1] - q[1]) < 0.3 * w_px and abs(o["p"][2] - q[2]) < 0.3 * w_px and abs(o["p"][3] - q[3]) < 0.3 * w_px for q in drawn)]
+            pieces, oval_paths = apply_ovals(pieces, left, w_px)
     except Exception:  # noqa: BLE001 - no usable ovals: behave as before
         ovals, oval_paths = [], []
+    oval_paths = ring_paths + oval_paths
     # circles and ellipses that clean stretches of the chains lie on (a balloon that other outlines touch, a round lobe): the
     # chains are snapped onto them below, junction zones included. Shapes are never completed here, only arcs are kept.
     try:
