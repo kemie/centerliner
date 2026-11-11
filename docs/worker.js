@@ -4,7 +4,7 @@ import { initWasm, Resvg } from "https://cdn.jsdelivr.net/npm/@resvg/resvg-wasm@
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.mjs";
 
 const VERSION = new URL(import.meta.url).searchParams.get("v") || "0";
-const ENGINE_FILES = ["centerline_exact", "centerline", "exact_edges", "exact_arcs", "exact_snap", "exact_ovals", "exact_shapes", "exact_rings", "common", "webconvert"];
+const ENGINE_FILES = ["centerline_exact", "centerline", "exact_edges", "exact_arcs", "exact_snap", "exact_ovals", "exact_shapes", "exact_rings", "exact_junctions", "common", "webconvert"];
 const STEPS = 5;
 const progress = (step, text) => postMessage({ type: "progress", step, steps: STEPS, text });
 const tick = () => new Promise((r) => setTimeout(r, 0));

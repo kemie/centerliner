@@ -20,6 +20,7 @@ from exact_snap import min_bend_radius, snap_chain, merge_lines, sharpen_bends, 
 from exact_edges import outline_lines, merge_collinear, pair_edges
 from exact_shapes import find_chain_ovals
 from exact_rings import find_rings, find_rrects, complete_rings
+from exact_junctions import snap_ends
 from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circle_lines
 
 # Corner rule: a bend whose centreline radius is <= CORNER_R x stroke width is a sharp corner (a round join of
@@ -1460,6 +1461,10 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
                 piece[3], piece[2] = piece[3] + d, piece[2] + d
     converge_ends(paths, w_px, mask)
     paths = add_missing_rings(paths, mask, w_px)
+    try:
+        paths = snap_ends(paths, w_px, mask)  # ends that nearly meet another stroke land exactly on its centreline
+    except Exception:  # noqa: BLE001 - leave the ends as they were
+        pass
     for x, y, d in big_dots:
         paths.append(dict(bez=[[np.array([x, y]), np.array([x, y]), np.array([x + 0.01, y]), np.array([x + 0.01, y])]], closed=False, w_px=d))
     for a, b, wd in short_segs:
