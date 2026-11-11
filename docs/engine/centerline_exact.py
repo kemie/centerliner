@@ -1089,6 +1089,7 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
     dots = []
     dot_mask = np.zeros_like(mask)
     big_dots = []
+    short_segs = []
     for i, sl in enumerate(ndimage.find_objects(lab), 1):
         h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
         if max(h, w) < DOT_MAX * w_px:  # a small solid mark: a dot (a cutoff that is too tight splits identical marks, because their sizes differ by a pixel)
@@ -1097,8 +1098,19 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
             area = len(xs)
             fill_of_circle = area / (np.pi * (max(h, w) / 2) ** 2)  # about 1.0 for a disc, about 1.27 for a square
             round_disc = max(h, w) < 1.15 * min(h, w) and 0.85 <= fill_of_circle <= 1.1
+            cx, cy = xs.mean() + 0.5, ys.mean() + 0.5
+            ev, evec = np.linalg.eigh(np.cov(np.vstack([xs, ys])))  # shape of the blob: spread along its long axis against across it
+            ax = evec[:, 1]
+            t = (xs - xs.mean()) * ax[0] + (ys - ys.mean()) * ax[1]
+            u = -(xs - xs.mean()) * ax[1] + (ys - ys.mean()) * ax[0]
+            length, width = t.max() - t.min() + 1, u.max() - u.min() + 1
+            # a short stroke, not a dot: clearly longer than wide on both measures. Measured: dots stay below 1.25 and 0.2 stroke widths even when pixel-shifted, real short strokes are above 1.35 and 0.35
+            elongated = ev[0] > 0 and np.sqrt(ev[1] / ev[0]) >= 1.3 and (length - width) >= 0.28 * w_px
             if round_disc and 2 * np.sqrt(area / np.pi) >= 1.3 * w_px:  # clearly wider than a stroke; otherwise a plain dot is right
-                big_dots.append((xs.mean() + 0.5, ys.mean() + 0.5, 2 * np.sqrt(area / np.pi) + 1))  # a round disc wider than a stroke: its own width
+                big_dots.append((cx, cy, 2 * np.sqrt(area / np.pi) + 1))  # a round disc wider than a stroke: its own width
+            elif elongated:  # a sparkle arm, an eye: a short segment along its long side
+                half = (length - width) / 2
+                short_segs.append((np.array([cx, cy]) - half * ax, np.array([cx, cy]) + half * ax, width))
             else:
                 dots.append((xs.mean() + 0.5, ys.mean() + 0.5))
             sk[comp] = False
@@ -1122,7 +1134,9 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
     if vector:
         pos, is_junc, edges, loops, w_px = vector_graph(cov, w_px, dot_mask)
         if not pos and not loops:
-            return dict(paths=[], dots=dots, fills=[], w_px=w_px, S=S, vb=vb, mask=mask)
+            only_marks = [dict(bez=[[np.array([x, y])] * 2 + [np.array([x + 0.01, y])] * 2], closed=False, w_px=d) for x, y, d in big_dots]
+            only_marks += [dict(bez=[[a, a + (b - a) / 3, a + 2 * (b - a) / 3, b]], closed=False, w_px=wd) for a, b, wd in short_segs]
+            return dict(paths=only_marks, dots=dots, fills=[], w_px=w_px, S=S, vb=vb, mask=mask)
     else:
         pos, is_junc, edges, loops = trace_graph(sk)
     newpos, E = simplify_graph(pos, is_junc, edges, w_px, dt)
@@ -1316,6 +1330,8 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
     converge_ends(paths, w_px, mask)
     for x, y, d in big_dots:
         paths.append(dict(bez=[[np.array([x, y]), np.array([x, y]), np.array([x + 0.01, y]), np.array([x + 0.01, y])]], closed=False, w_px=d))
+    for a, b, wd in short_segs:
+        paths.append(dict(bez=[[a, a + (b - a) / 3, a + 2 * (b - a) / 3, b]], closed=False, w_px=wd))
     res = dict(paths=paths, dots=dots, fills=fills, w_px=w_px, S=S, vb=vb, mask=mask, ink=ink)
     if keep_fills:
         add_residual_fills(res, tol, corner_deg, corner_radius)
