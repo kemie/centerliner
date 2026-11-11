@@ -19,7 +19,7 @@ from exact_ovals import find_ovals, apply_ovals, snap_ellipses, join_lines_ovals
 from exact_snap import min_bend_radius, snap_chain, merge_lines, sharpen_bends, snap_circles, arc_of_chain, arc_beziers
 from exact_edges import outline_lines, merge_collinear, pair_edges
 from exact_shapes import find_chain_ovals
-from exact_rings import find_rings, complete_rings
+from exact_rings import find_rings, find_rrects, complete_rings
 from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circle_lines
 
 # Corner rule: a bend whose centreline radius is <= CORNER_R x stroke width is a sharp corner (a round join of
@@ -1396,6 +1396,7 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
     rings = []
     try:
         rings = find_rings(mask, w_px)
+        rings = rings + find_rrects(mask, w_px, rings, rad)
         pieces, ring_paths = complete_rings(pieces, rings, w_px, list(circles) + [(c[0][0], c[0][1], c[1]) for c in circ_px])
     except Exception:  # noqa: BLE001 - no usable rings: behave as before
         ring_paths = []

@@ -171,5 +171,116 @@ def complete_rings(pieces, rings, w, skip=()):
         pieces = new_pieces
         wp = float(np.median(widths)) if widths else w
         ring["done"] = True
-        extra.append((_bez_on_oval(ring, 0.0, 2 * np.pi, True), True, wp))
+        extra.append((ring["bez"] if "bez" in ring else _bez_on_oval(ring, 0.0, 2 * np.pi, True), True, wp))
     return pieces, extra
+
+
+# ---------------------------------------------------------------------------- rounded rectangles (slice 2)
+RR_RESID = 0.12   # worst distance (stroke widths) of the hole boundary from the fitted rounded rectangle
+
+
+def _rr_sdf(q, a, b, r):
+    """Signed distance from points q (in the rectangle's own frame, centre at 0) to a rounded rectangle of half sizes a, b and corner radius r."""
+    d = np.abs(q) - np.array([a - r, b - r])
+    return np.hypot(np.maximum(d[:, 0], 0), np.maximum(d[:, 1], 0)) + np.minimum(np.maximum(d[:, 0], d[:, 1]), 0) - r
+
+
+def _fit_rrect(B, w):
+    """Least-squares rounded rectangle through the boundary points B: (cx, cy, a, b, r, theta), worst residual."""
+    from scipy import optimize
+    c0 = B.mean(axis=0)
+    vt = np.linalg.svd(B - c0, full_matrices=False)[2]
+    best = None
+    for th0 in (0.0, float(np.arctan2(vt[0][1], vt[0][0]))):
+        R = np.array([[np.cos(th0), np.sin(th0)], [-np.sin(th0), np.cos(th0)]])
+        q = (B - c0) @ R.T
+        a0, b0 = np.abs(q[:, 0]).max(), np.abs(q[:, 1]).max()
+
+        def res(p):
+            c, s = np.cos(p[5]), np.sin(p[5])
+            qq = (B - p[:2]) @ np.array([[c, s], [-s, c]]).T
+            return _rr_sdf(qq, p[2], p[3], min(max(p[4], 0.01), min(p[2], p[3]) - 0.01))
+
+        sol = optimize.least_squares(res, [c0[0], c0[1], a0, b0, 0.3 * min(a0, b0), th0], x_scale=[1, 1, 1, 1, 1, 0.1], max_nfev=60)
+        if best is None or sol.cost < best.cost:
+            best = sol
+    p = best.x
+    p[4] = min(max(p[4], 0.0), min(p[2], p[3]))
+    return p, float(np.abs(best.fun).max())
+
+
+def _rr_bez(p, grow):
+    """Closed path (8 cubics: 4 sides, 4 corner arcs) of the rounded rectangle p grown outward by `grow`."""
+    cx, cy, a, b, r, th = p
+    a, b, r = a + grow, b + grow, r + grow
+    r = min(r, a, b)
+    k = 0.5522847498 * r
+    c, s = np.cos(th), np.sin(th)
+    Rm = np.array([[c, -s], [s, c]])
+    T = lambda pt: np.array([cx, cy]) + Rm @ np.asarray(pt, float)  # noqa: E731
+    segs = []
+
+    def line(p0, p1):
+        p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+        segs.append([T(p0), T(p0 + (p1 - p0) / 3), T(p0 + 2 * (p1 - p0) / 3), T(p1)])
+
+    def arc(p0, h0, h1, p1):
+        segs.append([T(p0), T(np.asarray(p0) + h0), T(np.asarray(p1) + h1), T(p1)])
+
+    line((-a + r, -b), (a - r, -b))
+    arc((a - r, -b), (k, 0), (0, -k), (a, -b + r))
+    line((a, -b + r), (a, b - r))
+    arc((a, b - r), (0, k), (k, 0), (a - r, b))
+    line((a - r, b), (-a + r, b))
+    arc((-a + r, b), (-k, 0), (0, k), (-a, b - r))
+    line((-a, b - r), (-a, -b + r))
+    arc((-a, -b + r), (0, -k), (-k, 0), (-a + r, -b))
+    return segs
+
+
+def _dense(bez, n=24):
+    u = np.linspace(0, 1, n, endpoint=False)[:, None]
+    return np.vstack([(1 - u) ** 3 * c[0] + 3 * (1 - u) ** 2 * u * c[1] + 3 * (1 - u) * u ** 2 * c[2] + u ** 3 * c[3] for c in bez])
+
+
+def find_rrects(mask, w, taken=(), corner_r=0.8):
+    """Rounded rectangles among the enclosed holes of the ink mask whose ring of ink is complete and about one stroke thick.
+    taken: rings (find_rings) already found; holes at the same place are skipped. corner_r: the engine's corner rule (stroke
+    widths): corners rounder than 1.15 times that stay rounded, tighter ones are sharp corners and left to the old pipeline."""
+    lab, n = ndimage.label(~mask)
+    border = set(lab[0]) | set(lab[-1]) | set(lab[:, 0]) | set(lab[:, -1])
+    dt = ndimage.distance_transform_edt(mask)
+    H, W = mask.shape
+    out = []
+    for k in range(1, n + 1):
+        if k in border:
+            continue
+        reg = lab == k
+        A = int(reg.sum())
+        if A < 60:
+            continue
+        ys, xs = np.nonzero(reg)
+        h, ww = ys.max() - ys.min() + 1, xs.max() - xs.min() + 1
+        if A / (h * ww) < 0.8 or min(h, ww) < 0.8 * w:
+            continue  # not rectangle-like (an ellipse fills 0.785 of its box), or too small to be a shape
+        cs = measure.find_contours(np.pad(reg, 1).astype(float), 0.5)
+        c = max(cs, key=len)
+        B = np.c_[c[:, 1] - 1 + 0.5, c[:, 0] - 1 + 0.5]
+        if len(B) < 40:
+            continue
+        cx, cy = xs.mean() + 0.5, ys.mean() + 0.5
+        if any(np.hypot(cx - r["p"][0], cy - r["p"][1]) < 0.5 * w for r in taken):
+            continue
+        p, mx = _fit_rrect(B, w)
+        if mx > RR_RESID * w or p[4] + w / 2 < 1.15 * corner_r * w:
+            continue
+        bez = _rr_bez(p, w / 2)
+        E = _dense(bez)
+        ix, iy = E[:, 0].astype(int), E[:, 1].astype(int)
+        ok = (ix >= 0) & (ix < W) & (iy >= 0) & (iy < H)
+        if ok.mean() < 1.0 or mask[iy[ok], ix[ok]].mean() < 0.97:
+            continue  # the centreline is not ink all round
+        if np.median(dt[iy[ok], ix[ok]]) > 1.3 * (w / 2):
+            continue  # ink much thicker than a stroke
+        out.append(dict(p=np.array([cx, cy, p[2], p[3], p[5]]), E=E, tree=cKDTree(E), resid=mx, circle=False, bez=bez, kind="rrect", rr=p))
+    return out

@@ -125,7 +125,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   // Bump this whenever the page, worker or engine files change: it is shown in the header and makes browsers fetch the new files instead of old cached ones.
-  const VERSION = "1.8";
+  const VERSION = "1.9";
   $("verNum").textContent = VERSION;
   const TIP_URL = "";  // a "buy me a coffee" link: leave empty until there is a real one; the link only appears when this is set
   if (TIP_URL) { $("tip").innerHTML = ' <a target="_blank" rel="noopener"></a>'; $("tip").firstElementChild.href = TIP_URL; $("tip").firstElementChild.textContent = "If this saved you time, you can buy me a coffee."; }
