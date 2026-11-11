@@ -25,6 +25,9 @@ from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circ
 CORNER_R = 0.8
 STRAIGHT_SIDE_DEG = 8.0  # a short bowed piece between two lines counts as a straight side only if both lines continue its direction within this many degrees
 SPUR_MAX = 0.92  # a short branch pointing out of a corner is a corner artefact only below this many stroke widths (measured: artefacts reach 0.85, real arms such as sparkle points are 1.0 or more)
+FILLET_MAX_DEG = 35.0  # two straight pieces meeting at up to this angle, with a measured bend radius, are joined by a small curve instead of a corner
+FILLET_MIN_R = 1.2  # ... when the bend's radius is at least this many stroke widths (the corner rule is 0.8)
+FILLET_MIN_LEN = 0.6  # the rounded join must start at least this many stroke widths from the corner point
 DOT_MAX = 1.75 # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -800,9 +803,23 @@ def assemble(P, closed, w_px, tol, corner_deg, corner_r=None, junctions=()):
         a, b = items[j], items[(j + 1) % m]
         if a is b or a["kind"] != "line" or b["kind"] != "line":
             continue
-        X = intersect(a, b) if angle_deg(a["d"], b["d"]) >= 20 else None
+        th = angle_deg(a["d"], b["d"])
+        X = intersect(a, b) if th >= 20 else None
         if X is not None and np.linalg.norm(X - P[b["i0"]]) <= 1.0 * w_px:
             a["e"] = b["s"] = X
+            if th <= FILLET_MAX_DEG:  # a small-angle bend with a real radius (a tight S-bend), not a corner: round it
+                v = b["i0"]
+                s_ = np.r_[0, np.cumsum(np.hypot(*np.diff(P, axis=0).T))]
+                j0, j1 = int(np.searchsorted(s_, s_[v] - 1.2 * w_px)), int(np.searchsorted(s_, s_[v] + 1.2 * w_px))
+                R = min_bend_radius(P[j0:j1 + 1], w_px) if j1 - j0 >= 6 else 0.0
+                if R > FILLET_MIN_R * w_px:
+                    R = min(R, 8 * w_px)
+                    tl = R * np.tan(np.radians(th) / 2)
+                    tl = min(tl, 0.4 * np.linalg.norm(a["e"] - a["s"]), 0.4 * np.linalg.norm(b["e"] - b["s"]))
+                    h = 4 / 3 * np.tan(np.radians(th) / 4) * tl / np.tan(np.radians(th) / 2)
+                    p1, p2 = X - tl * a["d"], X + tl * b["d"]
+                    a["fe"], b["fs"] = p1, p2
+                    a["fillet"] = np.array([p1, p1 + h * a["d"], p2 - h * b["d"], p2])
         else:
             a["e"] = b["s"] = (a["e"] + b["s"]) / 2
     segs = []
@@ -810,9 +827,11 @@ def assemble(P, closed, w_px, tol, corner_deg, corner_r=None, junctions=()):
         if it.get("drop"):
             continue
         if it["kind"] == "line":
-            s, e = it["s"], it["e"]
+            s, e = it.get("fs", it["s"]), it.get("fe", it["e"])
             if np.linalg.norm(e - s) > 1e-6:
                 segs.append(np.array([s, s + (e - s) / 3, s + 2 * (e - s) / 3, e]))
+            if "fillet" in it:
+                segs.append(it["fillet"])
         else:
             Pc = P[it["i0"]:it["i1"] + 1].copy()
             prev, nxt = nb(j, -1), nb(j, 1)
@@ -939,8 +958,70 @@ def align_small_kinks(segs, closed, w_px, lo=12.0, hi=16.5, max_move=0.06):
     return segs
 
 
+def round_small_kinks(segs, closed, P, w_px):
+    """Two straight pieces that meet at 12 to 35 degrees where the chain itself bends with a real radius (a tight S-bend, not a
+    corner) get a small curve between them instead of a corner anchor. The measured radius decides, so real small corners stay."""
+    segs = [np.array(c, float) for c in segs]
+    n = len(segs)
+
+    def straight(c):
+        ch = c[3] - c[0]
+        L = np.linalg.norm(ch)
+        if L < 1e-9:
+            return False
+        dev = max(abs(ch[0] * (c[1][1] - c[0][1]) - ch[1] * (c[1][0] - c[0][0])), abs(ch[0] * (c[2][1] - c[0][1]) - ch[1] * (c[2][0] - c[0][0]))) / L
+        return dev < 0.02 * L
+
+    out = []
+    for k in range(n):
+        out.append(segs[k])
+    ins = {}  # index of segment -> fillet cubic to put after it
+    new = [c.copy() for c in segs]
+    for k in range(n if closed else n - 1):
+        a, b = new[k], new[(k + 1) % n]
+        if a is b or not (straight(a) and straight(b)):
+            continue
+        ua, ub = a[3] - a[0], b[3] - b[0]
+        La, Lb = np.linalg.norm(ua), np.linalg.norm(ub)
+        if La < 1e-9 or Lb < 1e-9:
+            continue
+        ua, ub = ua / La, ub / Lb
+        th = angle_deg(ua, ub)
+        if not (12 <= th <= FILLET_MAX_DEG) or np.linalg.norm(a[3] - b[0]) > 1e-6 * w_px + 1e-3:
+            continue
+        X = a[3]
+        d = np.linalg.norm(P - X, axis=1)
+        i = int(np.argmin(d))
+        if d[i] > w_px:
+            continue
+        lo, hi = i, i
+        while lo > 0 and d[lo - 1] < 1.5 * w_px:
+            lo -= 1
+        while hi < len(P) - 1 and d[hi + 1] < 1.5 * w_px:
+            hi += 1
+        R = min_bend_radius(P[lo:hi + 1], w_px) if hi - lo >= 6 else 0.0
+        if R <= FILLET_MIN_R * w_px:
+            continue
+        R = min(R, 8 * w_px)
+        tl = min(R * np.tan(np.radians(th) / 2), 0.4 * La, 0.4 * Lb)
+        if tl < FILLET_MIN_LEN * w_px:
+            continue  # a rounded join that small would only crowd three anchors together
+        h = 4 / 3 * np.tan(np.radians(th) / 4) * tl / np.tan(np.radians(th) / 2)
+        p1, p2 = X - tl * ua, X + tl * ub
+        a[3], a[2], a[1] = p1, p1 - (p1 - a[0]) / 3, a[0] + (p1 - a[0]) / 3
+        b[0], b[1], b[2] = p2, p2 + (b[3] - p2) / 3, b[3] - (b[3] - p2) / 3
+        ins[k] = np.array([p1, p1 + h * ua, p2 - h * ub, p2])
+    res = []
+    for k in range(n):
+        res.append(new[k])
+        if k in ins:
+            res.append(ins[k])
+    return res
+
+
 def fit_chain(P, closed, w_px, tol=0.07, corner_deg=50, corner_r=None, junctions=()):
-    return align_small_kinks(collapse_double_corners(_fit_chain(P, closed, w_px, tol, corner_deg, corner_r, junctions), closed, w_px), closed, w_px)
+    segs = align_small_kinks(collapse_double_corners(_fit_chain(P, closed, w_px, tol, corner_deg, corner_r, junctions), closed, w_px), closed, w_px)
+    return round_small_kinks(segs, closed, np.asarray(P, float), w_px)
 
 
 def _fit_chain(P, closed, w_px, tol=0.07, corner_deg=50, corner_r=None, junctions=()):
