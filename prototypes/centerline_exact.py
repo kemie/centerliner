@@ -28,6 +28,7 @@ SPUR_MAX = 0.92  # a short branch pointing out of a corner is a corner artefact 
 FILLET_MAX_DEG = 35.0  # two straight pieces meeting at up to this angle, with a measured bend radius, are joined by a small curve instead of a corner
 FILLET_MIN_R = 1.2  # ... when the bend's radius is at least this many stroke widths (the corner rule is 0.8)
 FILLET_MIN_LEN = 0.6  # the rounded join must start at least this many stroke widths from the corner point
+RING_COVERED = 0.85  # a round ring counts as already drawn when this share of its circumference lies on a path
 DOT_MAX = 1.75 # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -1439,6 +1440,7 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
             else:
                 piece[3], piece[2] = piece[3] + d, piece[2] + d
     converge_ends(paths, w_px, mask)
+    paths = add_missing_rings(paths, mask, w_px)
     for x, y, d in big_dots:
         paths.append(dict(bez=[[np.array([x, y]), np.array([x, y]), np.array([x + 0.01, y]), np.array([x + 0.01, y])]], closed=False, w_px=d))
     for a, b, wd in short_segs:
@@ -1594,6 +1596,73 @@ def complete_circle(Pxy, mask, w_px):
         return None
     t = np.linspace(0, 2 * np.pi, max(int(2 * np.pi * R), 24), endpoint=False)
     return np.c_[cx + R * np.cos(t), cy + R * np.sin(t)], len(Pxy) - len(arc)
+
+
+def add_missing_rings(paths, mask, w_px):
+    """A round ring (a berry, a bead) whose hole is enclosed ink-wise but whose centreline the rest of the pipeline did not
+    close: only an arc of it came out, because the strokes of a garland run into it and its thickness is uneven. Where fewer than
+    85% of the ring's circumference is covered by a path, the ring is drawn as one closed circle between the hole and the
+    ring's outer edge, and the partial arcs lying on it are dropped. Rings that are already complete are left alone."""
+    H, W = mask.shape
+    bg, n = ndimage.label(~mask)
+    cands = []
+    for i, sl in enumerate(ndimage.find_objects(bg), 1):
+        if sl[0].start == 0 or sl[1].start == 0 or sl[0].stop == H or sl[1].stop == W:
+            continue
+        h, ww = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+        comp = bg == i
+        ys, xs = np.nonzero(comp)
+        A = len(xs)
+        if not (0.6 * w_px <= np.sqrt(A / np.pi) <= 4 * w_px) or max(h, ww) > 1.06 * min(h, ww) or not 0.92 <= A / (np.pi * (max(h, ww) / 2) ** 2) <= 1.08:
+            continue
+        cands.append((xs.mean() + 0.5, ys.mean() + 0.5))
+    if not cands:
+        return paths
+    samples = []
+    for p in paths:
+        u = np.linspace(0, 1, 24)[:, None]
+        for c in p["bez"]:
+            samples.append((1 - u) ** 3 * c[0] + 3 * (1 - u) ** 2 * u * c[1] + 3 * (1 - u) * u ** 2 * c[2] + u ** 3 * c[3])
+    tree = cKDTree(np.vstack(samples)) if samples else None
+    paths = list(paths)
+    for cx, cy in cands:
+        inner, runs = [], []
+        for ang in np.radians(np.arange(0, 360, 10)):
+            d, dx, dy = 0.0, np.cos(ang), np.sin(ang)
+            while d < 6 * w_px and not mask[min(max(int(cy + d * dy), 0), H - 1), min(max(int(cx + d * dx), 0), W - 1)]:
+                d += 0.5
+            e0 = d
+            while d < 6 * w_px and mask[min(max(int(cy + d * dy), 0), H - 1), min(max(int(cx + d * dx), 0), W - 1)]:
+                d += 0.5
+            inner.append(e0)
+            if d - e0 < 3.5 * w_px:
+                runs.append(d - e0)
+        if len(runs) < 24:
+            continue
+        T = float(np.median(runs))
+        if not (0.7 * w_px <= T <= 2.5 * w_px) or min(runs) < 0.6 * w_px:  # no gap in the ring
+            continue
+        R = float(np.median(inner)) + T / 2
+        t = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+        ring = np.c_[cx + R * np.cos(t), cy + R * np.sin(t)]
+        if tree is not None and (tree.query(ring)[0] < 0.35 * w_px).mean() >= RING_COVERED:
+            continue  # already drawn
+        keep = []
+        for p in paths:
+            pts = _samp(p)
+            on_ring = np.abs(np.hypot(pts[:, 0] - cx, pts[:, 1] - cy) - R) < 0.4 * w_px
+            if not p["closed"] and on_ring.mean() >= 0.9:
+                continue  # an arc of this very ring
+            keep.append(p)
+        paths = keep + [dict(bez=arc_beziers(np.array([cx, cy]), R, 0.0, 2 * np.pi), closed=True, w_px=T if T > 1.4 * w_px else w_px)]
+        samples = None
+        tree = cKDTree(np.vstack([_samp(p) for p in paths]))
+    return paths
+
+
+def _samp(p):
+    u = np.linspace(0, 1, 24)[:, None]
+    return np.vstack([(1 - u) ** 3 * c[0] + 3 * (1 - u) ** 2 * u * c[1] + 3 * (1 - u) * u ** 2 * c[2] + u ** 3 * c[3] for c in p["bez"]])
 
 
 def converge_ends(paths, w_px, mask):
