@@ -18,6 +18,7 @@ from skimage.morphology import skeletonize
 from exact_ovals import find_ovals, apply_ovals, snap_ellipses, join_lines_ovals
 from exact_snap import min_bend_radius, snap_chain, merge_lines, sharpen_bends, snap_circles, arc_of_chain, arc_beziers
 from exact_edges import outline_lines, merge_collinear, pair_edges
+from exact_shapes import find_chain_ovals
 from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circle_lines
 
 # Corner rule: a bend whose centreline radius is <= CORNER_R x stroke width is a sharp corner (a round join of
@@ -1396,6 +1397,12 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
             pieces, oval_paths = apply_ovals(pieces, ovals, w_px)
     except Exception:  # noqa: BLE001 - no usable ovals: behave as before
         ovals, oval_paths = [], []
+    # circles and ellipses that clean stretches of the chains lie on (a balloon that other outlines touch, a round lobe): the
+    # chains are snapped onto them below, junction zones included. Shapes are never completed here, only arcs are kept.
+    try:
+        ovals = ovals + find_chain_ovals(pieces, w_px, ovals, list(circles) + [(c[0][0], c[0][1], c[1]) for c in circ_px])
+    except Exception:  # noqa: BLE001 - no usable shapes: behave as before
+        pass
     cpts_px = (cpts - np.array(vb[:2])) * S if len(cpts) else cpts
     paths = []
     for Pxy, closed, bend_nodes, wp in pieces:

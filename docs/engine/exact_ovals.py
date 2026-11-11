@@ -15,6 +15,8 @@ from skimage import measure
 
 DEBUG = False
 MAX_RESID = 0.1   # worst distance error (stroke widths) of the hole boundary from "w/2 outside the ellipse"
+ARC_EXT_TOL = 0.35  # junction zones: how far (stroke widths) a chain may be from a found shape and still be pulled onto it
+ARC_EXT_LEN = 1.0   # ... and for how long past the end of the clean stretch
 DENSE = 2400      # points on the dense ellipse polyline
 
 
@@ -161,6 +163,21 @@ def snap_ellipses(P, closed, ovals, w, tol=0.12, min_len=1.5):
             if (j - i + 1) >= min_len * w:
                 runs.append((i, j))
             i = j + 1
+        if o.get("arc"):
+            # a shape found along the chains: its outline is bent near the junctions where other strokes meet it. Carry each clean
+            # run on past its ends while the chain stays within ARC_EXT_TOL of the shape (at most ARC_EXT_LEN stroke widths).
+            far = d < ARC_EXT_TOL * w
+            grown = []
+            for i, j in runs:
+                lo, hi = i, j
+                if closed or i <= ARC_EXT_LEN * w:  # only toward the end of the chain, where it meets another stroke
+                    while lo > 0 and far[lo - 1] and i - lo < ARC_EXT_LEN * w:
+                        lo -= 1
+                if closed or n - 1 - j <= ARC_EXT_LEN * w:
+                    while hi < n - 1 and far[hi + 1] and hi - j < ARC_EXT_LEN * w:
+                        hi += 1
+                grown.append((lo, hi))
+            runs = grown
         for i, j in runs:
             k = np.arange(i, j + 1)
             f = np.ones(len(k))
