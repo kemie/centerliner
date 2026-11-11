@@ -23,6 +23,7 @@ from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circ
 # Corner rule: a bend whose centreline radius is <= CORNER_R x stroke width is a sharp corner (a round join of
 # a sharp path); a larger radius is kept as a curve. Measured on the icons, joins sit at 0.3-0.7, true curves at 0.95+.
 CORNER_R = 0.8
+DOT_MAX = 1.75  # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
 
@@ -1087,15 +1088,22 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
     lab, n = ndimage.label(mask)  # 4-connected: small solid marks that only touch at a corner (two squares) are separate dots
     dots = []
     dot_mask = np.zeros_like(mask)
+    big_dots = []
     for i, sl in enumerate(ndimage.find_objects(lab), 1):
         h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
-        if max(h, w) < 1.6 * w_px:
-            ys, xs = np.nonzero(lab == i)
-            dots.append((xs.mean() + 0.5, ys.mean() + 0.5))
-            sk[lab == i] = False
-            dot_mask |= lab == i
+        if max(h, w) < DOT_MAX * w_px:  # a small solid mark: a dot (a cutoff that is too tight splits identical marks, because their sizes differ by a pixel)
+            comp = lab == i
+            ys, xs = np.nonzero(comp)
+            area = len(xs)
+            fill_of_circle = area / (np.pi * (max(h, w) / 2) ** 2)  # about 1.0 for a disc, about 1.27 for a square
+            round_disc = max(h, w) < 1.15 * min(h, w) and 0.85 <= fill_of_circle <= 1.1
+            if round_disc and 2 * np.sqrt(area / np.pi) >= 1.3 * w_px:  # clearly wider than a stroke; otherwise a plain dot is right
+                big_dots.append((xs.mean() + 0.5, ys.mean() + 0.5, 2 * np.sqrt(area / np.pi) + 1))  # a round disc wider than a stroke: its own width
+            else:
+                dots.append((xs.mean() + 0.5, ys.mean() + 0.5))
+            sk[comp] = False
+            dot_mask |= comp
     # solid round discs (much wider than a stroke) become one fat dot each: a point drawn with a stroke as wide as the disc
-    big_dots = []
     if not keep_fills:
         rr = max(2, int(round(0.85 * w_px)))
         yy, xx = np.ogrid[-rr:rr + 1, -rr:rr + 1]
@@ -1105,6 +1113,8 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
             comp = olab == i
             area = comp.sum()
             h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+            if (dot_mask & comp).any():
+                continue  # already taken as a small mark above
             if 2 * np.sqrt(area / np.pi) >= 1.7 * w_px and area >= 0.75 * np.pi * (max(h, w) / 2) ** 2:
                 ys, xs = np.nonzero(comp)
                 big_dots.append((xs.mean() + 0.5, ys.mean() + 0.5, 2 * np.sqrt(area / np.pi) + 1))
