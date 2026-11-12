@@ -283,6 +283,11 @@ def pair_and_chain(newpos, edges, w_px, join_deg=45):
                         continue  # same direction but offset sideways: two different strokes, not one going straight through
                     cand.append((dev, ends[a], ends[b]))
             used = set()
+            if sum(1 for a in range(len(ends)) for b in range(a + 1, len(ends)) if ends[a][0] == ends[b][0]) >= 2:
+                for dev, ea, eb in sorted(cand):  # two or more loops start and end on this node (two leaves on one stem): each closes on itself
+                    if ea[0] == eb[0] and ea not in used and eb not in used:
+                        make_link(ea, eb, dev)
+                        used |= {ea, eb}
             for dev, ea, eb in sorted(cand):  # 1) branches that continue smoothly (T, X crossings)
                 if dev <= join_deg and ea not in used and eb not in used:
                     make_link(ea, eb, dev)

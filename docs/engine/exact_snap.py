@@ -276,7 +276,11 @@ def sharpen_bends(P, closed, w, corner_r, min_turn=50.0, max_turn=150.0, corners
         return P
     cand = []
     rng = range(n) if closed else range(m + j, n - m - j)
+    step = np.linalg.norm(np.roll(P, -1, axis=0) - P, axis=1)
+    jumps = np.flatnonzero(step > 0.15 * w) if closed else np.array([], int)  # a loop closed by a straight bridge (two leaves on one stem): a corner there is not read from the bridge
     for i in rng:
+        if len(jumps) and (((jumps - (i - m - j)) % n) <= 2 * (m + j)).any():
+            continue
         ca, da, dva = _arm(P, i - m - j, i - m)
         cb, db, dvb = _arm(P, i + m, i + m + j)
         if dva > 0.06 * w or dvb > 0.06 * w:
