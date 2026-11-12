@@ -33,6 +33,7 @@ FILLET_MAX_DEG = 35.0  # two straight pieces meeting at up to this angle, with a
 FILLET_MIN_R = 1.2  # ... when the bend's radius is at least this many stroke widths (the corner rule is 0.8)
 FILLET_MIN_LEN = 0.6  # the rounded join must start at least this many stroke widths from the corner point
 RING_COVERED = 0.85  # a round ring counts as already drawn when this share of its circumference lies on a path
+MAX_DISC_ARMS = 1  # a thick round blob is a dot only with at most this many strokes leaving it (a disc on a stem is one)
 DOT_MAX = 1.75 # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -1243,6 +1244,12 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
             h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
             if (dot_mask & comp).any():
                 continue  # already taken as a small mark above
+            # strokes leaving the disc: ink components in a band just outside it. A dot has none, or one (a stem it sits on, the nib of a pen);
+            # a thick blob where several strokes meet (the fish end on the board in Gravad Lax, a lime wheel's hub) is not a dot, the strokes run into it
+            band = ndimage.binary_dilation(comp, iterations=max(int(0.9 * w_px), 2)) & ~ndimage.binary_dilation(comp, iterations=max(int(0.4 * w_px), 1))
+            arms_lab, n_arms = ndimage.label(mask & band, structure=np.ones((3, 3), bool))
+            if n_arms and sum(1 for k in range(1, n_arms + 1) if (arms_lab == k).sum() >= 0.3 * w_px) > MAX_DISC_ARMS:
+                continue
             if 2 * np.sqrt(area / np.pi) >= 1.7 * w_px and area >= 0.75 * np.pi * (max(h, w) / 2) ** 2:
                 ys, xs = np.nonzero(comp)
                 big_dots.append((xs.mean() + 0.5, ys.mean() + 0.5, 2 * np.sqrt(area / np.pi) + 1))
