@@ -258,6 +258,10 @@ def _arm(P, i0, i1):
     return c, d, dev
 
 
+ON_CHAIN = 0.15   # a corner point this close to the chain (stroke widths) lies on it
+OFF_CHAIN = 0.4   # ... one farther than this is off it
+
+
 def sharpen_bends(P, closed, w, corner_r, min_turn=50.0, max_turn=150.0, corners=None, snap=0.25, circles=None, ovals=None):
     """A tight bend between two straight-ish arms is a corner the medial axis has cut: put the exact intersection of the arms
     there. Same corner rule as everywhere else (equivalent radius <= corner_r * w). It covers what assemble() cannot see,
@@ -304,20 +308,31 @@ def sharpen_bends(P, closed, w, corner_r, min_turn=50.0, max_turn=150.0, corners
         sec = 1.0 / np.cos(np.radians(theta) / 2)
         if d / (sec - 1) > corner_r * w:
             continue
-        cand.append((i, X, theta, ca, da, cb, db))
+        cand.append((i, X, theta, ca, da, cb, db, d))
     if not cand:
         return P
     # one corner per cluster: the candidate whose bend is sharpest
-    picked, last = [], None
+    clusters, last = [], None
     for c in cand:
         if last is not None and c[0] - last <= m:
-            if c[2] > picked[-1][2]:
-                picked[-1] = c
+            clusters[-1].append(c)
         else:
-            picked.append(c)
+            clusters.append([c])
         last = c[0]
-    if closed and len(picked) > 1 and picked[0][0] + n - picked[-1][0] <= m:  # one cluster across the start
-        picked[0] = max(picked[0], picked.pop(), key=lambda c: c[2])
+    if closed and len(clusters) > 1 and clusters[0][0][0] + n - clusters[-1][-1][0] <= m:  # one cluster across the start
+        clusters[0] += clusters.pop()
+
+    def best(cl):
+        sharp = max(cl, key=lambda c: c[2])
+        if sharp[7] > OFF_CHAIN * w:
+            # the sharpest bend puts the corner well off the chain: further along a wall that runs into a curve the arm tilts, the
+            # turn looks bigger and the corner lands outside the ink (the shoulders of man-avatar); a bend whose corner lies on the chain is the real one
+            on = [c for c in cl if c[7] <= ON_CHAIN * w]
+            if on:
+                return max(on, key=lambda c: c[2])
+        return sharp
+
+    picked = [best(cl) for cl in clusters]
     if DEBUG:
         print('  sharpen', [(c[0], np.round(c[1], 1).tolist(), round(c[2])) for c in picked])
 
@@ -331,7 +346,7 @@ def sharpen_bends(P, closed, w, corner_r, min_turn=50.0, max_turn=150.0, corners
         return k
 
     zones = []
-    for i, X, _, ca, da, cb, db in picked:
+    for i, X, _, ca, da, cb, db, _d in picked:
         zones.append((leave(ca, da, i, -1), leave(cb, db, i, 1), X))
     if closed:  # start the loop half-way between two corners so that no replaced stretch wraps around the start
         i0, i1 = zones[0][0], zones[1][0] if len(zones) > 1 else zones[0][0] + n
