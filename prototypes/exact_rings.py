@@ -21,6 +21,7 @@ MIN_ON = 1.0      # an on-stretch shorter than this is a stroke crossing the rin
 STRAIGHT = 0.65  # a stretch of chain whose sagitta is at most this share of the ring's over the same stretch is a straight stroke ...
 CURVED = 0.15    # ... and it only touches the ring when the ring bends away from it by at least this much over the same stretch
 SHORT_TOUCH = 4.5  # ... and only when the contact is shorter than this (stroke widths): measured touches 3.0, shared outlines 5.8 and more
+HUG = 0.6        # a leftover whose points all lie within this many stroke widths of the ring is dropped
 MIN_KEEP = 0.8    # a leftover shorter than this is a stub of the ring itself and is dropped
 
 
@@ -124,9 +125,12 @@ def _cut(P, closed, ring, w):
     out = []
     n = len(P)
     off = ~grown
+    d_full = ring["tree"].query(P)[0]
     for i, j in _runs(off):
         if (j - i + 1) < MIN_KEEP * w:
             continue
+        if (d_full[i:j + 1] < HUG * w).all():
+            continue  # a leftover that only lies along the ring (the corner bit of a side that was cut): the ring draws it
         seg = P[i:j + 1].copy()
         if i > 0 and grown[i - 1]:
             seg[0] = ring["E"][idx[i]]  # the stroke now starts exactly on the ring
@@ -152,7 +156,7 @@ def complete_rings(pieces, rings, w, skip=()):
             continue  # no chain runs along this ring: leave it to the rest of the pipeline
         # already one clean closed piece on the ring and nothing else along it: nothing to improve
         ons = [i for i, nl in enumerate(near_len) if nl >= 1.5 * w]
-        if len(ons) == 1 and pieces[ons[0]][1]:
+        if len(ons) == 1 and pieces[ons[0]][1] and ring.get("kind") != "free":  # (a thin-hole ring is redrawn anyway: the old piece is whole, its fitting is what fails)
             d = ring["tree"].query(pieces[ons[0]][0])[0]
             if (d < CORE * w).mean() >= 0.95:
                 continue
@@ -171,11 +175,15 @@ def complete_rings(pieces, rings, w, skip=()):
         pieces = new_pieces
         wp = float(np.median(widths)) if widths else w
         ring["done"] = True
-        extra.append((ring["bez"] if "bez" in ring else _bez_on_oval(ring, 0.0, 2 * np.pi, True), True, wp))
+        if "parts" in ring:
+            extra += [(b, c, wp) for b, c in ring["parts"]]  # a ring that gave up a shared side comes in open pieces
+        else:
+            extra.append((ring["bez"] if "bez" in ring else _bez_on_oval(ring, 0.0, 2 * np.pi, True), True, wp))
     return pieces, extra
 
 
 # ---------------------------------------------------------------------------- rounded rectangles (slice 2)
+THIN_RR_RESID = 0.08  # a thin plate must fit a rectangle this closely to be drawn as one (a pole with a round top and square foot does not)
 RR_RESID = 0.12   # worst distance (stroke widths) of the hole boundary from the fitted rounded rectangle
 
 
@@ -238,6 +246,21 @@ def _rr_bez(p, grow):
     return segs
 
 
+def _rect_bez(p, grow):
+    """Sharp-cornered rectangle (4 straight sides) of the fitted rectangle p grown by `grow`."""
+    cx, cy, a, b, r, th = p
+    a, b = a + grow, b + grow
+    c, s = np.cos(th), np.sin(th)
+    Rm = np.array([[c, -s], [s, c]])
+    T = lambda q: np.array([cx, cy]) + Rm @ np.asarray(q, float)  # noqa: E731
+    pts = [(-a, -b), (a, -b), (a, b), (-a, b)]
+    segs = []
+    for i in range(4):
+        p0, p1 = np.array(pts[i]), np.array(pts[(i + 1) % 4])
+        segs.append([T(p0), T(p0 + (p1 - p0) / 3), T(p0 + 2 * (p1 - p0) / 3), T(p1)])
+    return segs
+
+
 def _dense(bez, n=24):
     u = np.linspace(0, 1, n, endpoint=False)[:, None]
     return np.vstack([(1 - u) ** 3 * c[0] + 3 * (1 - u) ** 2 * u * c[1] + 3 * (1 - u) * u ** 2 * c[2] + u ** 3 * c[3] for c in bez])
@@ -261,7 +284,8 @@ def find_rrects(mask, w, taken=(), corner_r=0.8):
             continue
         ys, xs = np.nonzero(reg)
         h, ww = ys.max() - ys.min() + 1, xs.max() - xs.min() + 1
-        if A / (h * ww) < 0.8 or min(h, ww) < 0.8 * w:
+        thin = max(h, ww) >= FREE_MIN_SIDE * w and 2 * ndimage.distance_transform_edt(reg).max() < FREE_THIN * w and measure.euler_number(reg, connectivity=1) == 1
+        if A / (h * ww) < 0.8 or (min(h, ww) < 0.8 * w and not thin):
             continue  # not rectangle-like (an ellipse fills 0.785 of its box), or too small to be a shape
         cs = measure.find_contours(np.pad(reg, 1).astype(float), 0.5)
         c = max(cs, key=len)
@@ -272,9 +296,11 @@ def find_rrects(mask, w, taken=(), corner_r=0.8):
         if any(np.hypot(cx - r["p"][0], cy - r["p"][1]) < 0.5 * w for r in taken):
             continue
         p, mx = _fit_rrect(B, w)
-        if mx > RR_RESID * w or p[4] + w / 2 < 1.15 * corner_r * w:
-            continue
-        bez = _rr_bez(p, w / 2)
+        rounded = p[4] + w / 2 >= 1.15 * corner_r * w
+        capsule = abs(p[4] - min(p[2], p[3])) < 0.15 * min(p[2], p[3])
+        if mx > RR_RESID * w or (not rounded and not (thin and mx <= THIN_RR_RESID * w)):
+            continue  # (tight corners: only a thin plate that fits a rectangle exactly; the rest is left to the old pipeline)
+        bez = _rr_bez(p, w / 2) if (rounded or capsule) else _rect_bez(p, w / 2)
         E = _dense(bez)
         ix, iy = E[:, 0].astype(int), E[:, 1].astype(int)
         ok = (ix >= 0) & (ix < W) & (iy >= 0) & (iy < H)
@@ -283,4 +309,66 @@ def find_rrects(mask, w, taken=(), corner_r=0.8):
         if np.median(dt[iy[ok], ix[ok]]) > 1.3 * (w / 2):
             continue  # ink much thicker than a stroke
         out.append(dict(p=np.array([cx, cy, p[2], p[3], p[5]]), E=E, tree=cKDTree(E), resid=mx, circle=False, bez=bez, kind="rrect", rr=p))
+    return out
+
+
+# ---------------------------------------------------------------------------- any complete ring of a thin hole (slice 4)
+FREE_THIN = 0.9      # an enclosed hole thinner than this (stroke widths, twice its largest inscribed radius): the line fitting fails at its ends
+FREE_MIN_SIDE = 2.0  # ... and at least this long (a tiny slot is not a plate)
+
+
+def _resample_closed(poly, step=1.0):
+    P = np.asarray(poly, float)
+    if np.allclose(P[0], P[-1]):
+        P = P[:-1]
+    Q = np.vstack([P, P[:1]])
+    seg = np.r_[0, np.cumsum(np.hypot(*np.diff(Q, axis=0).T))]
+    t = np.arange(0, seg[-1], step)
+    return np.c_[np.interp(t, seg, Q[:, 0]), np.interp(t, seg, Q[:, 1])]
+
+
+def find_free_rings(mask, w, taken=()):
+    """Complete rings of any shape around a thin enclosed hole (a plate, a blade, a capsule): the centreline is the hole's outline
+    pushed out by half a stroke. Returns dicts with P, the closed centreline polyline (x, y), 1 pixel apart; the caller fits it
+    (fit_chain), so the engine's corner rule and the corner radius setting apply as everywhere else."""
+    from shapely.geometry import Polygon
+    lab, n = ndimage.label(~mask)
+    border = set(lab[0]) | set(lab[-1]) | set(lab[:, 0]) | set(lab[:, -1])
+    dt_ink = ndimage.distance_transform_edt(mask)
+    H, W = mask.shape
+    out = []
+    for k in range(1, n + 1):
+        if k in border:
+            continue
+        reg = lab == k
+        if reg.sum() < 40:
+            continue
+        ys, xs = np.nonzero(reg)
+        if max(np.ptp(xs), np.ptp(ys)) + 1 < FREE_MIN_SIDE * w:
+            continue
+        if measure.euler_number(reg, connectivity=1) != 1:
+            continue  # an annular gap with an island inside (a ring between two rings): not one hole of a plate
+        if 2 * ndimage.distance_transform_edt(reg).max() >= FREE_THIN * w:
+            continue
+        cx, cy = xs.mean() + 0.5, ys.mean() + 0.5
+        if any(np.hypot(cx - r["p"][0], cy - r["p"][1]) < 0.5 * w for r in taken):
+            continue
+        cs = measure.find_contours(np.pad(reg, 1).astype(float), 0.5)
+        c = max(cs, key=len)
+        B = np.c_[c[:, 1] - 1 + 0.5, c[:, 0] - 1 + 0.5]
+        if len(B) < 30:
+            continue
+        poly = Polygon(B).buffer(0).buffer(w / 2, join_style=1, resolution=16)
+        if poly.is_empty or poly.geom_type != "Polygon":
+            continue
+        P = _resample_closed(np.array(poly.exterior.coords), 1.0)
+        ix, iy = P[:, 0].astype(int), P[:, 1].astype(int)
+        if (ix < 0).any() or (iy < 0).any() or (ix >= W).any() or (iy >= H).any():
+            continue
+        if mask[iy, ix].mean() < 0.97:
+            continue  # the centreline is not ink all round: not a complete ring
+        d = dt_ink[iy, ix]
+        if not (0.8 * (w / 2) <= np.median(d) <= 1.25 * (w / 2)) or np.percentile(d, 10) < 0.6 * (w / 2):
+            continue  # the ring is not one stroke thick all round
+        out.append(dict(P=P, p=np.array([cx, cy, 0.0, 0.0, 0.0]), E=P, tree=cKDTree(P), circle=False, kind="free", resid=0.0))
     return out

@@ -19,7 +19,8 @@ from exact_ovals import find_ovals, apply_ovals, snap_ellipses, join_lines_ovals
 from exact_snap import min_bend_radius, snap_chain, merge_lines, sharpen_bends, snap_circles, arc_of_chain, arc_beziers
 from exact_edges import outline_lines, merge_collinear, pair_edges
 from exact_shapes import find_chain_ovals
-from exact_rings import find_rings, find_rrects, complete_rings
+from exact_rings import find_rings, find_rrects, find_free_rings, complete_rings
+from exact_rings import _cut as ring_cut
 from exact_junctions import snap_ends
 from exact_arcs import arcs_of, corner_points, corner_lines, exact_circles, circle_lines
 
@@ -1398,6 +1399,26 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
     try:
         rings = find_rings(mask, w_px)
         rings = rings + find_rrects(mask, w_px, rings, rad)
+        free = find_free_rings(mask, w_px, rings)  # plates and blades around a thin hole, any shape: the hole's outline pushed out by half a stroke
+        free.sort(key=lambda r: len(r["P"]))  # smallest first: where two rings share a side (a pole standing on its base) the later one gives it up
+        drawn_free = list(rings)  # every ring drawn so far, rectangles and ellipses too: a side shared with one of them is theirs
+        for fr in free:
+            chains = [(fr["P"], True)]
+            for prev in drawn_free:
+                nxt = []
+                for Q, cl in chains:
+                    left, cut = ring_cut(Q, cl, prev, w_px)
+                    nxt += left if cut else [(Q, cl)]
+                chains = nxt
+            parts = []
+            for Q, cl in chains:
+                bez = fit_chain(Q, cl, w_px, tol, corner_deg, corner_radius, [])  # (no corner sharpening: a round end such as a pole's top or a blade's tip stays round)
+                if bez:
+                    parts.append((bez, cl))
+            if parts:
+                fr["parts"] = parts
+                rings.append(fr)
+                drawn_free.append(fr)
         pieces, ring_paths = complete_rings(pieces, rings, w_px, list(circles) + [(c[0][0], c[0][1], c[1]) for c in circ_px])
     except Exception:  # noqa: BLE001 - no usable rings: behave as before
         ring_paths = []
@@ -1409,7 +1430,8 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
             pieces, oval_paths = apply_ovals(pieces, left, w_px)
     except Exception:  # noqa: BLE001 - no usable ovals: behave as before
         ovals, oval_paths = [], []
-    oval_paths = ring_paths + oval_paths
+    ring_open = [e for e in ring_paths if not e[1]]  # a ring that gave up a shared side: open pieces, not arcs of a shape
+    oval_paths = [e for e in ring_paths if e[1]] + oval_paths
     # circles and ellipses that clean stretches of the chains lie on (a balloon that other outlines touch, a round lobe): the
     # chains are snapped onto them below, junction zones included. Shapes are never completed here, only arcs are kept.
     try:
@@ -1443,6 +1465,8 @@ def run(path, tol=0.07, join_deg=45, corner_deg=50, target_w_px=20, thick_f=1.7,
         if not closed_:
             ring_ends += [(len(paths), 0, bez[0][0]), (len(paths), -1, bez[-1][3])]
         paths.append(dict(bez=bez, closed=closed_, w_px=wp_))
+    for bez, closed_, wp_ in ring_open:
+        paths.append(dict(bez=bez, closed=False, w_px=wp_))
     # a stroke that ran into a ring now stops at the open end of the exact arc: join it (its line passes through that end)
     for k, pa in enumerate(paths):
         if pa["closed"] or any(k == q[0] for q in ring_ends):
