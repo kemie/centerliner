@@ -22,6 +22,12 @@ STRAIGHT = 0.65  # a stretch of chain whose sagitta is at most this share of the
 CURVED = 0.15    # ... and it only touches the ring when the ring bends away from it by at least this much over the same stretch
 SHORT_TOUCH = 4.5  # ... and only when the contact is shorter than this (stroke widths): measured touches 3.0, shared outlines 5.8 and more
 HUG = 0.6        # a leftover whose points all lie within this many stroke widths of the ring is dropped
+LAND_FROM, LAND_TO = 1.0, 3.0  # a cut stroke lands on the ring along the line of its stretch this far (stroke widths) before its end ...
+LAND_STRAIGHT = 0.08           # ... when that stretch is straight to within this ...
+LAND_NEAR = 0.5                # (the landing point is at most this far from the nearest ring point)
+LAND_TRIM = 0.1                # (the end stretch farther than this from that line is replaced by it)
+LAND_REACH = 1.0  # ... if the ring is at most this far along it ...
+LAND_SIN = 0.42   # ... and it meets the ring at 25 degrees or more
 MIN_KEEP = 0.8    # a leftover shorter than this is a stub of the ring itself and is dropped
 
 
@@ -133,11 +139,63 @@ def _cut(P, closed, ring, w):
             continue  # a leftover that only lies along the ring (the corner bit of a side that was cut): the ring draws it
         seg = P[i:j + 1].copy()
         if i > 0 and grown[i - 1]:
-            seg[0] = ring["E"][idx[i]]  # the stroke now starts exactly on the ring
+            seg = _land(seg[::-1], ring, idx[i], w)[::-1]  # the stroke now starts exactly on the ring
         if j < n - 1 and grown[j + 1]:
-            seg[-1] = ring["E"][idx[j]]
+            seg = _land(seg, ring, idx[j], w)
         out.append((seg, False))
     return out, True
+
+
+def _land(seg, ring, near_idx, w):
+    """The cut stroke seg (an (x, y) array) with its last point landed on the ring: along the stroke's own straight line, so that a
+    straight stroke stays straight (two ribbon tails meeting at a knot come into it as two straight lines, not with a bend where the
+    medial axis was pulled together); the nearest ring point when the stroke is not straight, would run along the ring, or would
+    have to go farther than LAND_REACH stroke widths. The bent stretch next to the end is replaced by the straight line."""
+    def plain():
+        out = seg.copy()
+        out[-1] = ring["E"][near_idx]
+        return out
+
+    m = len(seg)
+    lo, hi = int(LAND_FROM * w), min(int(LAND_TO * w), m - 1)
+    if hi - lo < int(1.0 * w):
+        return plain()
+    win = seg[m - 1 - hi:m - lo]  # the straight part of the stroke, clear of the bent junction zone
+    c = win.mean(axis=0)
+    t = np.linalg.svd(win - c, full_matrices=False)[2][0]
+    if np.abs((win - c)[:, 0] * t[1] - (win - c)[:, 1] * t[0]).max() > LAND_STRAIGHT * w:
+        return plain()  # not straight: it is not extended along a line
+    if np.dot(seg[-1] - c, t) < 0:
+        t = -t
+    q = c + t * np.dot(seg[-1] - c, t)  # the end, moved onto that line
+    E = ring["E"]
+    A, B = E[:-1], E[1:]
+    if np.allclose(E[0], E[-1]) or ring.get("kind") == "free":
+        A, B = E, np.roll(E, -1, axis=0)
+    V = B - A
+    cr = V[:, 0] * t[1] - V[:, 1] * t[0]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        u = ((q - A)[:, 0] * t[1] - (q - A)[:, 1] * t[0]) / cr
+        s_ = ((q - A)[:, 0] * V[:, 1] - (q - A)[:, 1] * V[:, 0]) / cr
+    sin = np.abs(cr) / np.maximum(np.linalg.norm(V, axis=1), 1e-12)
+    ok = np.isfinite(u) & np.isfinite(s_) & (u >= 0) & (u <= 1) & (sin >= LAND_SIN) & (s_ >= 0) & (s_ <= LAND_REACH * w)
+    if not ok.any():
+        return plain()
+    k0 = np.nonzero(ok)[0][int(np.argmin(s_[ok]))]
+    hit = q + t * s_[k0]
+    if np.linalg.norm(hit - ring["E"][near_idx]) > LAND_NEAR * w:
+        return plain()  # not where the stroke meets the ring (its line goes on through the ring's wall and out the far side)
+    # drop the bent stretch at the end: back from the end until the points lie on the line again
+    dev = np.abs((seg - c)[:, 0] * t[1] - (seg - c)[:, 1] * t[0])
+    keep = m
+    while keep > 1 and dev[keep - 1] > LAND_TRIM * w and m - keep < int(1.5 * w):
+        keep -= 1
+    if dev[keep - 1] > LAND_TRIM * w:
+        return plain()
+    a0 = seg[keep - 1]
+    n_ins = max(int(np.ceil(np.linalg.norm(hit - a0))), 1)
+    line = a0 + (hit - a0) * (np.arange(1, n_ins + 1) / n_ins)[:, None]
+    return np.vstack([seg[:keep], line])
 
 
 def complete_rings(pieces, rings, w, skip=()):
