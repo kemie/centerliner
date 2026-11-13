@@ -35,6 +35,7 @@ FILLET_MIN_LEN = 0.6  # the rounded join must start at least this many stroke wi
 RING_COVERED = 0.85  # a round ring counts as already drawn when this share of its circumference lies on a path
 MAX_DISC_ARMS = 1  # a thick round blob is a dot only with at most this many strokes leaving it (a disc on a stem is one)
 CUT_CORNER_REACH = 3.0  # a curve that replaces a cut corner stays within this many stroke widths of the corner point
+HOLE_ROUND = 0.2  # a hole counts as round when its radius from the centre varies by no more than this fraction of the median
 DOT_MAX = 1.75 # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -1705,6 +1706,8 @@ def add_missing_rings(paths, mask, w_px):
         T = float(np.median(runs))
         if not (0.7 * w_px <= T <= 2.5 * w_px) or min(runs) < 0.6 * w_px:  # no gap in the ring
             continue
+        if max(inner) - min(inner) > HOLE_ROUND * float(np.median(inner)):
+            continue  # the hole's outline is no circle (a rounded trapezoid, the tab of a bag): area and bounding box alone do not tell
         R = float(np.median(inner)) + T / 2
         t = np.linspace(0, 2 * np.pi, 72, endpoint=False)
         ring = np.c_[cx + R * np.cos(t), cy + R * np.sin(t)]
