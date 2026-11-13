@@ -36,6 +36,7 @@ RING_COVERED = 0.85  # a round ring counts as already drawn when this share of i
 MAX_DISC_ARMS = 1  # a thick round blob is a dot only with at most this many strokes leaving it (a disc on a stem is one)
 CUT_CORNER_REACH = 3.0  # a curve that replaces a cut corner stays within this many stroke widths of the corner point
 HOLE_ROUND = 0.2  # a hole counts as round when its radius from the centre varies by no more than this fraction of the median
+CLEFT_RUN, CLEFT_TURN, CLEFT_TANGENT, CLEFT_BOW = 1.5, 100.0, 20.0, 0.013  # a run shorter than CLEFT_RUN * 2 stroke widths, a corner of >= CLEFT_TURN degrees at one end, <= CLEFT_TANGENT at the other, and not perfectly straight (its mean distance from the chord, in stroke widths, >= CLEFT_BOW)
 DOT_MAX = 1.75 # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -736,6 +737,11 @@ def build_items(P, Lmin, tolr, closed=False):
         very_straight = np.abs(dvec[0] * (seg_pts[:, 1] - P[a][1]) - dvec[1] * (seg_pts[:, 0] - P[a][0])).max() / max(L, 1e-9) <= 0.04 * Lmin / 2
         flat_by_corner = very_straight and L >= 0.6 * Lmin and ((turn(t) >= 12 and short_start) or (turn_end(t) >= 12 and short_end))
         genuine = L >= 2 * Lmin or (L >= Lmin and (turn(t) >= 20 or turn_end(t) >= 20)) or short_between_corners or flat_by_corner
+        if genuine and L < CLEFT_RUN * Lmin and not short_between_corners:
+            ts, te = turn(t, 90), turn_end(t, 90)  # (a free end counts as a corner)
+            bow = (np.abs(dvec[0] * (seg_pts[:, 1] - P[a][1]) - dvec[1] * (seg_pts[:, 0] - P[a][0])) / max(L, 1e-9)).mean()  # mean distance of the run from its chord (the maximum is too jumpy: one pixel step moves it)
+            if bow >= CLEFT_BOW * Lmin / 2 and ((ts >= CLEFT_TURN and te <= CLEFT_TANGENT) or (te >= CLEFT_TURN and ts <= CLEFT_TANGENT)):
+                genuine = False  # a short straight run between a sharp corner and a smooth curve is the start of that curve (the lobe beside the cleft of a heart), not a line of its own
         if genuine:
             items.append(dict(kind="line", i0=a, i1=b))
         elif items and items[-1]["kind"] == "curve":
