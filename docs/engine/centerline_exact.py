@@ -34,6 +34,7 @@ FILLET_MIN_R = 1.2  # ... when the bend's radius is at least this many stroke wi
 FILLET_MIN_LEN = 0.6  # the rounded join must start at least this many stroke widths from the corner point
 RING_COVERED = 0.85  # a round ring counts as already drawn when this share of its circumference lies on a path
 MAX_DISC_ARMS = 1  # a thick round blob is a dot only with at most this many strokes leaving it (a disc on a stem is one)
+CUT_CORNER_REACH = 3.0  # a curve that replaces a cut corner stays within this many stroke widths of the corner point
 DOT_MAX = 1.75 # solid marks smaller than this many stroke widths (longest side) become dots
 NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -789,6 +790,8 @@ def assemble(P, closed, w_px, tol, corner_deg, corner_r=None, junctions=()):
             th = angle_deg(lp["d"], ln["d"])
             if X is not None and 25 <= th <= 150:
                 d = np.linalg.norm(seg - X, axis=1).min()  # how far the centerline cuts the corner
+                if np.linalg.norm(seg - X, axis=1).max() > CUT_CORNER_REACH * w_px:
+                    continue  # a long curve that only passes near the corner (the lobe of a heart) is not a corner the medial axis cut
                 r_eq = d / (1 / np.cos(np.radians(th) / 2) - 1)  # radius of the arc that would cut it that much
                 # a branch attached at the bend (V with a stem): the skeleton is pulled round by the junction and can't be
                 # measured, and the branch touching the inside means the inner corner is sharp
